@@ -32,11 +32,11 @@ public:
 
 private:
     // params
-    static constexpr double TABLE_X = 1.0; 
-    static constexpr double TABLE_Y = 0.5; 
+    static constexpr double TABLE_X = 0.3; 
+    static constexpr double TABLE_Y = 0.3; 
     static constexpr double TABLE_Z = 0.5;
-    static constexpr double TABLE_DX = 1.2; 
-    static constexpr double TABLE_DY = 1.2; 
+    static constexpr double TABLE_DX = 0.2; 
+    static constexpr double TABLE_DY = 0.2; 
     static constexpr double TABLE_DZ = 0.1;
 
     static constexpr double BLOCK_DZ = 0.015;
