@@ -1,4 +1,7 @@
 #include "StateMachine.hpp"
+#include <cmath> // for M_PI_2
+#include <tf2/LinearMath/Quaternion.h>
+#include <tf2_geometry_msgs/tf2_geometry_msgs.h>
 
 StateMachine::StateMachine(rclcpp::Node::SharedPtr node)
     : node_(node),
@@ -24,31 +27,64 @@ void StateMachine::update()
     case RobotState::ADD_OBSTACLE:
     {
         RCLCPP_INFO(node_->get_logger(), "Adding obstacle…");
+
         geometry_msgs::msg::PoseStamped pose;
         shape_msgs::msg::SolidPrimitive dim;
 
-        pose.header.frame_id = "base_footprint";
-        pose.pose.position.x = TABLE_X;
-        pose.pose.position.y = TABLE_Y;
-        pose.pose.orientation.w = 1.0;
+        // common header
+        pose.header.frame_id = "base_link";
+        pose.header.stamp = node_->now();
 
         if (!table_added_)
         {
-            // first time: add table
+            // 1) Add the table with identity orientation
+            pose.pose.position.x = TABLE_X;
+            pose.pose.position.y = TABLE_Y;
             pose.pose.position.z = TABLE_Z;
+            pose.pose.orientation.w = 1.0;
+
             dim.type = dim.BOX;
             dim.dimensions = {TABLE_DX, TABLE_DY, TABLE_DZ};
+
             table_added_ = true;
         }
         else
         {
-            // every subsequent call: stack a Jenga block
-            double table_top_z = TABLE_Z - TABLE_DZ / 2.0;
-            double z = table_top_z + block_count_ * BLOCK_DZ // full layers below
-                       + BLOCK_DZ / 2.0;                               // half above current layer
+            // 2) Compute block pose & orientation
+            // 2a) layer orientation: even layers = Y‐axis blocks (90°), odd = X‐axis (0°)
+            bool even_layer = (layer_count_ % 2 == 0);
+            double yaw = even_layer ? M_PI_2 : 0.0;
+            tf2::Quaternion q;
+            q.setRPY(0, 0, yaw);
+            pose.pose.orientation = tf2::toMsg(q);
+
+            // 2b) Z so block sits centered on its layer
+            double table_top = TABLE_Z + TABLE_DZ / 2.0;
+            double z = table_top + layer_count_ * BLOCK_DZ // full layers below
+                       + BLOCK_DZ / 2.0;                   // center of this block
             pose.pose.position.z = z;
+
+            // 2c) X/Y offset: two blocks per layer, spaced BLOCK_DY apart
+            double sep = BLOCK_DY;
+            bool first_in_layer = (block_count_ % 2 == 0);
+            double side = first_in_layer ? -sep : sep;
+
+            if (even_layer)
+            {
+                // blocks long‐axis = Y ⇒ offset in X
+                pose.pose.position.x = TABLE_X + side;
+                pose.pose.position.y = TABLE_Y;
+            }
+            else
+            {
+                // blocks long‐axis = X ⇒ offset in Y
+                pose.pose.position.x = TABLE_X;
+                pose.pose.position.y = TABLE_Y + side;
+            }
+
             dim.type = dim.BOX;
             dim.dimensions = {BLOCK_DX, BLOCK_DY, BLOCK_DZ};
+            block_count_++;
         }
 
         addObstacle(pose, dim);
@@ -71,7 +107,6 @@ void StateMachine::update()
     case RobotState::PLACE_BLOCK:
         RCLCPP_INFO(node_->get_logger(), "Placing block…");
         placeBlock();
-        block_count_++;
         state_ = RobotState::CHECK_LAYER;
         break;
 
@@ -107,4 +142,61 @@ void StateMachine::addObstacle(geometry_msgs::msg::PoseStamped pose,
 // stubs…
 void StateMachine::pickBlock() {}
 void StateMachine::moveToTable(int, int) {}
-void StateMachine::placeBlock() {}
+
+void StateMachine::placeBlock()
+{
+    // Log what we’re doing
+    RCLCPP_INFO(node_->get_logger(),
+                "Placing block %d in layer %d",
+                block_count_, layer_count_);
+
+    // Build a PoseStamped for the place location
+    geometry_msgs::msg::PoseStamped target_pose;
+    target_pose.header.frame_id = "base_link"; // <-- add semicolon
+    target_pose.header.stamp = node_->now();
+
+    // 1) compute Z so the block sits on top of the correct layer
+    double table_top_z = TABLE_Z + TABLE_DZ / 2.0;
+    double z = table_top_z + layer_count_ * BLOCK_DZ // full layers below
+               + BLOCK_DZ / 2.0;                     // center of this block
+    target_pose.pose.position.z = z;
+
+    // 2) pick orientation: even layers = 90°, odd = 0°
+    bool even_layer = (layer_count_ % 2 == 0);
+    double yaw = even_layer ? M_PI_2 : 0.0; // use the M_PI_2 macro from <cmath>
+    tf2::Quaternion q;
+    q.setRPY(0, 0, yaw);
+    target_pose.pose.orientation = tf2::toMsg(q);
+
+    // 3) for each layer there are 2 blocks: index 0 or 1 in that layer
+    //    we space them one block‐width (BLOCK_DY) apart along the axis
+    double sep = BLOCK_DY; // gap = block “width”
+    bool first_in_layer = (block_count_ % 2 == 0);
+    double side = first_in_layer ? -sep : sep;
+
+    if (even_layer)
+    {
+        // blocks long‐axis = Y, so separate along X
+        target_pose.pose.position.x = TABLE_X + side;
+        target_pose.pose.position.y = TABLE_Y;
+    }
+    else
+    {
+        // blocks long‐axis = X, so separate along Y
+        target_pose.pose.position.x = TABLE_X;
+        target_pose.pose.position.y = TABLE_Y + side;
+    }
+
+    // DEBUG print
+    RCLCPP_INFO(node_->get_logger(),
+                " -> [x=%.3f y=%.3f z=%.3f yaw=%.2f°]",
+                target_pose.pose.position.x,
+                target_pose.pose.position.y,
+                target_pose.pose.position.z,
+                yaw * 180.0 / M_PI);
+
+    // TODO: send `target_pose` to your arm/gripper controller to
+    //       1) move down
+    //       2) open gripper
+    //       3) retract
+}
