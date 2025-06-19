@@ -50,13 +50,11 @@ private:
     bool table_added_;
     rclcpp::Publisher<moveit_msgs::msg::PlanningScene>::SharedPtr planning_scene_pub_;
 
-    // Publishers
-    rclcpp::Publisher<moveit_msgs::msg::PlanningScene>::SharedPtr planning_scene_publisher_;
-
     std::shared_ptr<icr_Motionplanning_arms> motion_node_;
 
     // Define Pick Pose
     geometry_msgs::msg::Pose pick_pose_;
+    geometry_msgs::msg::Pose table_pose_;
 
     // state actions
     void pickBlock();
