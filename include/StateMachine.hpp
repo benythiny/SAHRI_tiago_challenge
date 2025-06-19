@@ -39,9 +39,9 @@ private:
     static constexpr double TABLE_DY = 1.2; 
     static constexpr double TABLE_DZ = 0.1;
 
-    static constexpr double BLOCK_DX = 0.15;
+    static constexpr double BLOCK_DZ = 0.015;
     static constexpr double BLOCK_DY = 0.025;
-    static constexpr double BLOCK_DZ = 0.05;
+    static constexpr double BLOCK_DX = 0.075;
 
     rclcpp::Node::SharedPtr node_;
     RobotState state_;
