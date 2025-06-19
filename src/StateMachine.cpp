@@ -10,8 +10,31 @@ StateMachine::StateMachine(rclcpp::Node::SharedPtr node)
       layer_count_(0),
       table_added_(false)
 {
-    planning_scene_pub_ = node_->create_publisher<moveit_msgs::msg::PlanningScene>(
-        "/monitored_planning_scene", rclcpp::QoS(1));
+    // Create a shared pointer to your node
+    motion_node_ = std::make_shared<icr_Motionplanning_arms>();
+
+    // Publisher
+    planning_scene_pub_ = motion_node_->create_publisher<moveit_msgs::msg::PlanningScene>(
+    "/planning_scene", rclcpp::QoS(1));
+
+    pick_pose_.position.x = 0.7;
+    pick_pose_.position.y = 0.0;
+    pick_pose_.position.z = 1.0;
+    // Simple orientation (quaternion), facing forward
+    pick_pose_.orientation.x = 0.0;
+    pick_pose_.orientation.y = 0.707;
+    pick_pose_.orientation.z = 0.0;
+    pick_pose_.orientation.w = 0.707;
+
+    table_pose_.position.x = 0.8;
+    table_pose_.position.y = 0.0;
+    table_pose_.position.z = 1.0;
+    // Simple orientation (quaternion), facing forward
+    table_pose_.orientation.x = 0.0;
+    table_pose_.orientation.y = 0.707;
+    table_pose_.orientation.z = 0.0;
+    table_pose_.orientation.w = 0.707;
+    
     RCLCPP_INFO(node_->get_logger(), "StateMachine up");
 }
 
@@ -139,9 +162,30 @@ void StateMachine::addObstacle(geometry_msgs::msg::PoseStamped pose,
     planning_scene_pub_->publish(scene);
 }
 
-// stubs…
-void StateMachine::pickBlock() {}
-void StateMachine::moveToTable(int, int) {}
+// 
+void StateMachine::pickBlock() {
+    
+    try {
+        motion_node_->motion_planning_control(pick_pose_, RobotTaskStatus::Arm::ARM_torso);
+        RCLCPP_INFO(node_->get_logger(), "Arm moved to pick position.");
+    } catch (const std::exception &e) {
+        RCLCPP_ERROR(node_->get_logger(), "Failed to move to pick position: %s", e.what());
+    }
+
+    motion_node_->GripperControl("CLOSE");
+
+}
+
+void StateMachine::moveToTable(int, int) {
+
+    try {
+        motion_node_->motion_planning_control(pick_pose_, RobotTaskStatus::Arm::ARM_torso);
+        RCLCPP_INFO(node_->get_logger(), "Arm moved to table position.");
+    } catch (const std::exception &e) {
+        RCLCPP_ERROR(node_->get_logger(), "Failed to move to table position: %s", e.what());
+    }
+
+}
 
 void StateMachine::placeBlock()
 {
@@ -199,4 +243,13 @@ void StateMachine::placeBlock()
     //       1) move down
     //       2) open gripper
     //       3) retract
+
+    try {
+        motion_node_->motion_planning_control(target_pose.pose, RobotTaskStatus::Arm::ARM_torso);
+        RCLCPP_INFO(node_->get_logger(), "Arm moved to target position.");
+    } catch (const std::exception &e) {
+        RCLCPP_ERROR(node_->get_logger(), "Failed to move to target position: %s", e.what());
+    }
+
+    motion_node_->GripperControl("OPEN");
 }
