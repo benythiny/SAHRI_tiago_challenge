@@ -36,7 +36,7 @@ include_directories(
 add_library(motion_planning_lib
   src/RobotTaskStatus.cpp
   src/Motionplanning_arms.cpp
-  src/state_machine.cpp
+  src/StateMachine.cpp
 )
 target_include_directories(motion_planning_lib PUBLIC include)
 ament_target_dependencies(motion_planning_lib ${THIS_PACKAGE_INCLUDE_DEPENDS})

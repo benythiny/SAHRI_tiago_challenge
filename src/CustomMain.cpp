@@ -1,7 +1,7 @@
 #include <rclcpp/rclcpp.hpp>
 #include "StateMachine.hpp"
 
-int main(int argc, char ** argv)
+int main(int argc, char **argv)
 {
     rclcpp::init(argc, argv);
 
@@ -11,9 +11,11 @@ int main(int argc, char ** argv)
 
     RCLCPP_INFO(node->get_logger(), "Hello");
 
-    // auto timer = node->create_wall_timer(
-    //     std::chrono::milliseconds(500),
-    // [&machine]() { machine.update(); });
+    auto timer = node->create_wall_timer(
+        std::chrono::milliseconds(500),
+        [&machine]()
+        { machine.update(); });
+
     rclcpp::spin(node);
 
     rclcpp::shutdown();

@@ -43,7 +43,7 @@ void StateMachine::update() {
             if (block_count_ % 2 == 0) {
                 layer_count_++;
             }
-            state_ = RobotState::PICK_BLOCK;
+            state_ = RobotState::ADD_OBSTACLE;
             break;
     }
 }
