@@ -19,6 +19,7 @@ set(THIS_PACKAGE_INCLUDE_DEPENDS
   controller_interface
   tf2_geometry_msgs
   geometry_msgs
+  shape_msgs
 )
 
 # Find dependencies
@@ -35,12 +36,13 @@ include_directories(
 add_library(motion_planning_lib
   src/RobotTaskStatus.cpp
   src/Motionplanning_arms.cpp
+  src/state_machine.cpp
 )
 target_include_directories(motion_planning_lib PUBLIC include)
 ament_target_dependencies(motion_planning_lib ${THIS_PACKAGE_INCLUDE_DEPENDS})
 
 # Add executable
-add_executable(tiago_challenge_exe src/main_motion.cpp)
+add_executable(tiago_challenge_exe src/CustomMain.cpp)
 
 # Link libraries
 ament_target_dependencies(tiago_challenge_exe ${THIS_PACKAGE_INCLUDE_DEPENDS})
