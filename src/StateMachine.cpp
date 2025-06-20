@@ -15,7 +15,7 @@ StateMachine::StateMachine(rclcpp::Node::SharedPtr node)
 
     // Publisher
     planning_scene_pub_ = motion_node_->create_publisher<moveit_msgs::msg::PlanningScene>(
-    "/planning_scene", rclcpp::QoS(1));
+        "/planning_scene", rclcpp::QoS(1));
 
     pick_pose_.position.x = 0.7;
     pick_pose_.position.y = 0.0;
@@ -34,7 +34,7 @@ StateMachine::StateMachine(rclcpp::Node::SharedPtr node)
     table_pose_.orientation.y = 0.707;
     table_pose_.orientation.z = 0.0;
     table_pose_.orientation.w = 0.707;
-    
+
     RCLCPP_INFO(node_->get_logger(), "StateMachine up");
 }
 
@@ -55,7 +55,7 @@ void StateMachine::update()
         shape_msgs::msg::SolidPrimitive dim;
 
         // common header
-        pose.header.frame_id = "base_link";
+        pose.header.frame_id = "base_footprint";
         pose.header.stamp = node_->now();
 
         if (!table_added_)
@@ -108,6 +108,16 @@ void StateMachine::update()
             dim.type = dim.BOX;
             dim.dimensions = {BLOCK_DX, BLOCK_DY, BLOCK_DZ};
             block_count_++;
+            // save it for MOVE_TO_TABLE
+            next_block_pose_ = pose;
+
+            // DEBUG: print out what you just computed
+            RCLCPP_INFO(node_->get_logger(),
+                        "[ADD_OBSTACLE] next_block_pose_ → frame: %s, x=%.3f y=%.3f z=%.3f",
+                        next_block_pose_.header.frame_id.c_str(),
+                        next_block_pose_.pose.position.x,
+                        next_block_pose_.pose.position.y,
+                        next_block_pose_.pose.position.z);
         }
 
         addObstacle(pose, dim);
@@ -122,8 +132,14 @@ void StateMachine::update()
         break;
 
     case RobotState::MOVE_TO_TABLE:
-        RCLCPP_INFO(node_->get_logger(), "Moving to table…");
-        moveToTable(block_count_, layer_count_);
+        RCLCPP_INFO(node_->get_logger(), "[MOVE_TO_TABLE] moving to:");
+        RCLCPP_INFO(node_->get_logger(),
+                    "   frame: %s  x=%.3f y=%.3f z=%.3f",
+                    next_block_pose_.header.frame_id.c_str(),
+                    next_block_pose_.pose.position.x,
+                    next_block_pose_.pose.position.y,
+                    next_block_pose_.pose.position.z);
+        moveToTable(next_block_pose_);
         state_ = RobotState::PLACE_BLOCK;
         break;
 
@@ -162,29 +178,45 @@ void StateMachine::addObstacle(geometry_msgs::msg::PoseStamped pose,
     planning_scene_pub_->publish(scene);
 }
 
-// 
-void StateMachine::pickBlock() {
-    
-    try {
+//
+void StateMachine::pickBlock()
+{
+
+    try
+    {
         motion_node_->motion_planning_control(pick_pose_, RobotTaskStatus::Arm::ARM_torso);
         RCLCPP_INFO(node_->get_logger(), "Arm moved to pick position.");
-    } catch (const std::exception &e) {
+    }
+    catch (const std::exception &e)
+    {
         RCLCPP_ERROR(node_->get_logger(), "Failed to move to pick position: %s", e.what());
     }
 
     motion_node_->GripperControl("CLOSE");
-
 }
 
-void StateMachine::moveToTable(int, int) {
+void StateMachine::moveToTable(
+    const geometry_msgs::msg::PoseStamped &target)
+{
+    try
+    {
+        // apply gripper offset so the wrist doesn’t collide with the block
+        geometry_msgs::msg::PoseStamped wrist_target = target;
+        wrist_target.pose.position.z += GRIPPER_OFFSET;
 
-    try {
-        motion_node_->motion_planning_control(pick_pose_, RobotTaskStatus::Arm::ARM_torso);
-        RCLCPP_INFO(node_->get_logger(), "Arm moved to table position.");
-    } catch (const std::exception &e) {
-        RCLCPP_ERROR(node_->get_logger(), "Failed to move to table position: %s", e.what());
+        // send the offset pose to your motion planner
+        motion_node_->motion_planning_control(
+            wrist_target.pose,
+            RobotTaskStatus::Arm::ARM_torso);
+        RCLCPP_INFO(node_->get_logger(),
+                    "Arm moved to block pose (wrist offset by %.3fm).",
+                    GRIPPER_OFFSET);
     }
-
+    catch (const std::exception &e)
+    {
+        RCLCPP_ERROR(node_->get_logger(),
+                     "Failed to move arm: %s", e.what());
+    }
 }
 
 void StateMachine::placeBlock()
@@ -196,7 +228,7 @@ void StateMachine::placeBlock()
 
     // Build a PoseStamped for the place location
     geometry_msgs::msg::PoseStamped target_pose;
-    target_pose.header.frame_id = "base_link"; // <-- add semicolon
+    target_pose.header.frame_id = "base_footprint"; // <-- add semicolon
     target_pose.header.stamp = node_->now();
 
     // 1) compute Z so the block sits on top of the correct layer
@@ -244,11 +276,24 @@ void StateMachine::placeBlock()
     //       2) open gripper
     //       3) retract
 
-    try {
-        motion_node_->motion_planning_control(target_pose.pose, RobotTaskStatus::Arm::ARM_torso);
-        RCLCPP_INFO(node_->get_logger(), "Arm moved to target position.");
-    } catch (const std::exception &e) {
-        RCLCPP_ERROR(node_->get_logger(), "Failed to move to target position: %s", e.what());
+    {
+        // before dropping, hold back by the gripper offset
+        geometry_msgs::msg::PoseStamped wrist_place = target_pose;
+        wrist_place.pose.position.z += GRIPPER_OFFSET;
+        try
+        {
+            motion_node_->motion_planning_control(
+                wrist_place.pose,
+                RobotTaskStatus::Arm::ARM_torso);
+            RCLCPP_INFO(node_->get_logger(),
+                        "Arm moved to place pose (wrist offset by %.3fm).",
+                        GRIPPER_OFFSET);
+        }
+        catch (const std::exception &e)
+        {
+            RCLCPP_ERROR(node_->get_logger(),
+                         "Failed to move to target position: %s", e.what());
+        }
     }
 
     motion_node_->GripperControl("OPEN");

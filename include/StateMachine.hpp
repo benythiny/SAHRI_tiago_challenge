@@ -32,16 +32,18 @@ public:
 
 private:
     // params
-    static constexpr double TABLE_X = 0.3; 
-    static constexpr double TABLE_Y = 0.3; 
+    static constexpr double TABLE_X = 0.7;
+    static constexpr double TABLE_Y = 0.0;
     static constexpr double TABLE_Z = 0.5;
-    static constexpr double TABLE_DX = 0.2; 
-    static constexpr double TABLE_DY = 0.2; 
+    static constexpr double TABLE_DX = 0.2;
+    static constexpr double TABLE_DY = 0.2;
     static constexpr double TABLE_DZ = 0.1;
 
     static constexpr double BLOCK_DZ = 0.015;
     static constexpr double BLOCK_DY = 0.025;
     static constexpr double BLOCK_DX = 0.075;
+
+    static constexpr double GRIPPER_OFFSET = 0.177; // Distance from wrist to gripping point
 
     rclcpp::Node::SharedPtr node_;
     RobotState state_;
@@ -56,10 +58,13 @@ private:
     geometry_msgs::msg::Pose pick_pose_;
     geometry_msgs::msg::Pose table_pose_;
 
+    // add this member to hold the “next block” pose
+    geometry_msgs::msg::PoseStamped next_block_pose_;
+
     // state actions
     void pickBlock();
     void addObstacle(geometry_msgs::msg::PoseStamped pose,
                      shape_msgs::msg::SolidPrimitive dimension);
-    void moveToTable(int block_index, int layer_index);
+    void moveToTable(const geometry_msgs::msg::PoseStamped &target);
     void placeBlock();
 };
