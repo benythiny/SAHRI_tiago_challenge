@@ -43,7 +43,7 @@ private:
     static constexpr double BLOCK_DY = 0.025;
     static constexpr double BLOCK_DX = 0.075;
 
-    static constexpr double GRIPPER_OFFSET = 0.177; // Distance from wrist to gripping point
+    static constexpr double GRIPPER_OFFSET = 0.2; // Distance from wrist to gripping point
 
     rclcpp::Node::SharedPtr node_;
     RobotState state_;

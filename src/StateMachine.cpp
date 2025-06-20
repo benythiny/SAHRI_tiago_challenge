@@ -1,7 +1,8 @@
 #include "StateMachine.hpp"
-#include <cmath> // for M_PI_2
+#include <cmath>
 #include <tf2/LinearMath/Quaternion.h>
 #include <tf2_geometry_msgs/tf2_geometry_msgs.h>
+#include <chrono>
 
 StateMachine::StateMachine(rclcpp::Node::SharedPtr node)
     : node_(node),
@@ -181,41 +182,85 @@ void StateMachine::addObstacle(geometry_msgs::msg::PoseStamped pose,
 //
 void StateMachine::pickBlock()
 {
+    bool success = false;
+    auto start = std::chrono::steady_clock::now();
+    const auto TIMEOUT = std::chrono::seconds(5);
 
-    try
+    while (!success)
     {
-        motion_node_->motion_planning_control(pick_pose_, RobotTaskStatus::Arm::ARM_torso);
-        RCLCPP_INFO(node_->get_logger(), "Arm moved to pick position.");
-    }
-    catch (const std::exception &e)
-    {
-        RCLCPP_ERROR(node_->get_logger(), "Failed to move to pick position: %s", e.what());
+        try
+        {
+            motion_node_->motion_planning_control(
+                pick_pose_, RobotTaskStatus::Arm::ARM_torso);
+            RCLCPP_INFO(node_->get_logger(), "Arm moved to pick position.");
+            success = true;
+        }
+        catch (const std::exception &e)
+        {
+            auto elapsed = std::chrono::steady_clock::now() - start;
+            if (elapsed > TIMEOUT)
+            {
+                RCLCPP_ERROR(node_->get_logger(),
+                             "Pick planning timed out after %lds",
+                             TIMEOUT.count());
+                break;
+            }
+            else
+            {
+                RCLCPP_WARN(node_->get_logger(),
+                            "Pick planning failed (%.2fs elapsed), retrying: %s",
+                            std::chrono::duration<double>(elapsed).count(),
+                            e.what());
+            }
+        }
     }
 
-    motion_node_->GripperControl("CLOSE");
+    if (success)
+    {
+        motion_node_->GripperControl("CLOSE");
+    }
 }
 
 void StateMachine::moveToTable(
     const geometry_msgs::msg::PoseStamped &target)
 {
-    try
-    {
-        // apply gripper offset so the wrist doesn’t collide with the block
-        geometry_msgs::msg::PoseStamped wrist_target = target;
-        wrist_target.pose.position.z += GRIPPER_OFFSET;
+    // apply gripper offset
+    geometry_msgs::msg::PoseStamped wrist_target = target;
+    wrist_target.pose.position.z += GRIPPER_OFFSET;
 
-        // send the offset pose to your motion planner
-        motion_node_->motion_planning_control(
-            wrist_target.pose,
-            RobotTaskStatus::Arm::ARM_torso);
-        RCLCPP_INFO(node_->get_logger(),
-                    "Arm moved to block pose (wrist offset by %.3fm).",
-                    GRIPPER_OFFSET);
-    }
-    catch (const std::exception &e)
+    bool success = false;
+    auto start = std::chrono::steady_clock::now();
+    const auto TIMEOUT = std::chrono::seconds(5);
+
+    while (!success)
     {
-        RCLCPP_ERROR(node_->get_logger(),
-                     "Failed to move arm: %s", e.what());
+        try
+        {
+            motion_node_->motion_planning_control(
+                wrist_target.pose, RobotTaskStatus::Arm::ARM_torso);
+            RCLCPP_INFO(node_->get_logger(),
+                        "Arm moved to block pose (wrist offset by %.3fm).",
+                        GRIPPER_OFFSET);
+            success = true;
+        }
+        catch (const std::exception &e)
+        {
+            auto elapsed = std::chrono::steady_clock::now() - start;
+            if (elapsed > TIMEOUT)
+            {
+                RCLCPP_ERROR(node_->get_logger(),
+                             "Move-to-table planning timed out after %lds",
+                             TIMEOUT.count());
+                break;
+            }
+            else
+            {
+                RCLCPP_WARN(node_->get_logger(),
+                            "Move-to-table planning failed (%.2fs elapsed), retrying: %s",
+                            std::chrono::duration<double>(elapsed).count(),
+                            e.what());
+            }
+        }
     }
 }
 
@@ -271,30 +316,49 @@ void StateMachine::placeBlock()
                 target_pose.pose.position.z,
                 yaw * 180.0 / M_PI);
 
-    // TODO: send `target_pose` to your arm/gripper controller to
-    //       1) move down
-    //       2) open gripper
-    //       3) retract
-
     {
         // before dropping, hold back by the gripper offset
         geometry_msgs::msg::PoseStamped wrist_place = target_pose;
         wrist_place.pose.position.z += GRIPPER_OFFSET;
-        try
+        bool success = false;
+        auto start = std::chrono::steady_clock::now();
+        const auto TIMEOUT = std::chrono::seconds(5);
+
+        // retry loop
+        while (!success)
         {
-            motion_node_->motion_planning_control(
-                wrist_place.pose,
-                RobotTaskStatus::Arm::ARM_torso);
-            RCLCPP_INFO(node_->get_logger(),
-                        "Arm moved to place pose (wrist offset by %.3fm).",
-                        GRIPPER_OFFSET);
+            try
+            {
+                motion_node_->motion_planning_control(
+                    wrist_place.pose, RobotTaskStatus::Arm::ARM_torso);
+                RCLCPP_INFO(node_->get_logger(),
+                            "Arm moved to place pose (wrist offset by %.3fm).",
+                            GRIPPER_OFFSET);
+                success = true;
+            }
+            catch (const std::exception &e)
+            {
+                auto elapsed = std::chrono::steady_clock::now() - start;
+                if (elapsed > TIMEOUT)
+                {
+                    RCLCPP_ERROR(node_->get_logger(),
+                                 "Place planning timed out after %lds",
+                                 TIMEOUT.count());
+                    break;
+                }
+                else
+                {
+                    RCLCPP_WARN(node_->get_logger(),
+                                "Place planning failed (%.2fs elapsed), retrying: %s",
+                                std::chrono::duration<double>(elapsed).count(),
+                                e.what());
+                }
+            }
         }
-        catch (const std::exception &e)
+
+        if (success)
         {
-            RCLCPP_ERROR(node_->get_logger(),
-                         "Failed to move to target position: %s", e.what());
+            motion_node_->GripperControl("OPEN");
         }
     }
-
-    motion_node_->GripperControl("OPEN");
 }
