@@ -338,7 +338,7 @@ void icr_Motionplanning_arms::motion_planning_control(
   group_arm.setStartStateToCurrentState();
   group_arm.setMaxVelocityScalingFactor(1.0);
   group_arm.setNumPlanningAttempts(5);
-  group_arm.setGoalTolerance(0.01);
+  group_arm.setGoalTolerance(0.001);
   group_arm.allowReplanning(true);
   group_arm.setPoseReferenceFrame("base_footprint");
   group_arm.setPlanningTime(0.1);

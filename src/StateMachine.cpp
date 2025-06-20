@@ -45,7 +45,7 @@ void StateMachine::update()
     {
     case RobotState::IDLE:
         RCLCPP_INFO(node_->get_logger(), "Starting stacking...");
-        state_ = RobotState::ADD_OBSTACLE;
+        state_ = RobotState::PICK_BLOCK;
         break;
 
     case RobotState::ADD_OBSTACLE:
@@ -155,7 +155,7 @@ void StateMachine::update()
         {
             layer_count_++;
         }
-        state_ = RobotState::ADD_OBSTACLE;
+        state_ = RobotState::PICK_BLOCK;
         break;
 
     default:
@@ -286,7 +286,7 @@ void StateMachine::placeBlock()
     bool even_layer = (layer_count_ % 2 == 0);
     double yaw = even_layer ? M_PI_2 : 0.0; // use the M_PI_2 macro from <cmath>
     tf2::Quaternion q;
-    q.setRPY(0, 0, yaw);
+    q.setRPY(0, M_PI_2, yaw);
     target_pose.pose.orientation = tf2::toMsg(q);
 
     // 3) for each layer there are 2 blocks: index 0 or 1 in that layer
@@ -361,4 +361,13 @@ void StateMachine::placeBlock()
             motion_node_->GripperControl("OPEN");
         }
     }
+
+    // motion_node_->GripperControl("OPEN");
+
+    // try {
+    //     motion_node_->motion_planning_control(pick_pose_, RobotTaskStatus::Arm::ARM_torso);
+    //     RCLCPP_INFO(node_->get_logger(), "Arm moved to table position.");
+    // } catch (const std::exception &e) {
+    //     RCLCPP_ERROR(node_->get_logger(), "Failed to move to table position: %s", e.what());
+    // }
 }
