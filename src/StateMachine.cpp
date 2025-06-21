@@ -18,8 +18,8 @@ StateMachine::StateMachine(rclcpp::Node::SharedPtr node)
     planning_scene_pub_ = motion_node_->create_publisher<moveit_msgs::msg::PlanningScene>(
         "/planning_scene", rclcpp::QoS(1));
 
-    pick_pose_.position.x = 0.7;
-    pick_pose_.position.y = 0.0;
+    pick_pose_.position.x = -0.3;
+    pick_pose_.position.y = 0.3;
     pick_pose_.position.z = 1.0;
     // Simple orientation (quaternion), facing forward
     pick_pose_.orientation.x = 0.0;
@@ -45,7 +45,7 @@ void StateMachine::update()
     {
     case RobotState::IDLE:
         RCLCPP_INFO(node_->get_logger(), "Starting stacking...");
-        state_ = RobotState::PICK_BLOCK;
+        state_ = RobotState::ADD_OBSTACLE;
         break;
 
     case RobotState::ADD_OBSTACLE:
@@ -109,8 +109,6 @@ void StateMachine::update()
             dim.type = dim.BOX;
             dim.dimensions = {BLOCK_DX, BLOCK_DY, BLOCK_DZ};
             block_count_++;
-            // save it for MOVE_TO_TABLE
-            next_block_pose_ = pose;
 
             // DEBUG: print out what you just computed
             RCLCPP_INFO(node_->get_logger(),
@@ -134,13 +132,7 @@ void StateMachine::update()
 
     case RobotState::MOVE_TO_TABLE:
         RCLCPP_INFO(node_->get_logger(), "[MOVE_TO_TABLE] moving to:");
-        RCLCPP_INFO(node_->get_logger(),
-                    "   frame: %s  x=%.3f y=%.3f z=%.3f",
-                    next_block_pose_.header.frame_id.c_str(),
-                    next_block_pose_.pose.position.x,
-                    next_block_pose_.pose.position.y,
-                    next_block_pose_.pose.position.z);
-        moveToTable(next_block_pose_);
+        moveToTable();
         state_ = RobotState::PLACE_BLOCK;
         break;
 
@@ -155,7 +147,7 @@ void StateMachine::update()
         {
             layer_count_++;
         }
-        state_ = RobotState::PICK_BLOCK;
+        state_ = RobotState::ADD_OBSTACLE;
         break;
 
     default:
@@ -182,85 +174,86 @@ void StateMachine::addObstacle(geometry_msgs::msg::PoseStamped pose,
 //
 void StateMachine::pickBlock()
 {
-    bool success = false;
-    auto start = std::chrono::steady_clock::now();
-    const auto TIMEOUT = std::chrono::seconds(5);
 
-    while (!success)
+    try
     {
-        try
-        {
-            motion_node_->motion_planning_control(
-                pick_pose_, RobotTaskStatus::Arm::ARM_torso);
-            RCLCPP_INFO(node_->get_logger(), "Arm moved to pick position.");
-            success = true;
-        }
-        catch (const std::exception &e)
-        {
-            auto elapsed = std::chrono::steady_clock::now() - start;
-            if (elapsed > TIMEOUT)
-            {
-                RCLCPP_ERROR(node_->get_logger(),
-                             "Pick planning timed out after %lds",
-                             TIMEOUT.count());
-                break;
-            }
-            else
-            {
-                RCLCPP_WARN(node_->get_logger(),
-                            "Pick planning failed (%.2fs elapsed), retrying: %s",
-                            std::chrono::duration<double>(elapsed).count(),
-                            e.what());
-            }
-        }
+        motion_node_->motion_planning_control(
+            pick_pose_, RobotTaskStatus::Arm::ARM_torso);
+        RCLCPP_INFO(node_->get_logger(), "Arm moved to pick position.");
+    }
+    catch (const std::exception &e)
+    {
+
+        RCLCPP_ERROR(node_->get_logger(),
+                     "Pick planning timed out after %lds",
+                     TIMEOUT.count());
+        break;
     }
 
-    if (success)
-    {
-        motion_node_->GripperControl("CLOSE");
-    }
+    motion_node_->GripperControl("CLOSE");
 }
 
-void StateMachine::moveToTable(
-    const geometry_msgs::msg::PoseStamped &target)
+void StateMachine::moveToTable()
 {
     // apply gripper offset
-    geometry_msgs::msg::PoseStamped wrist_target = target;
-    wrist_target.pose.position.z += GRIPPER_OFFSET;
+    double z = table_top_z + layer_count_ * BLOCK_DZ // full layers below
+               + BLOCK_DZ / 2.0;
+    double x = TABLE_X;
+    double y = TABLE_Y;
 
-    bool success = false;
-    auto start = std::chrono::steady_clock::now();
-    const auto TIMEOUT = std::chrono::seconds(5);
+    geometry_msgs::msg::PoseStamped wrist_target;
+    wrist_target.header.frame_id = "base_footprint";
+    wrist_target.header.stamp = node_->now();
+    wrist_target.pose.position.x = x;
+    wrist_target.pose.position.y = y;
+    wrist_target.pose.position.z = z + GRIPPER_OFFSET; // offset by gripper
 
-    while (!success)
+    bool even_layer = (layer_count_ % 2 == 0);
+    double yaw = even_layer ? M_PI_2 : 0.0; // use the M_PI_2 macro from <cmath>
+    tf2::Quaternion q;
+    q.setRPY(0, M_PI_2, yaw);
+    wrist_target.pose.orientation = tf2::toMsg(q);
+
+    double sep = BLOCK_DY; // gap = block “width”
+    bool first_in_layer = (block_count_ % 2 == 0);
+    double side = first_in_layer ? -sep : sep;
+
+    if (even_layer)
     {
-        try
-        {
-            motion_node_->motion_planning_control(
-                wrist_target.pose, RobotTaskStatus::Arm::ARM_torso);
-            RCLCPP_INFO(node_->get_logger(),
-                        "Arm moved to block pose (wrist offset by %.3fm).",
-                        GRIPPER_OFFSET);
-            success = true;
-        }
-        catch (const std::exception &e)
-        {
-            auto elapsed = std::chrono::steady_clock::now() - start;
-            if (elapsed > TIMEOUT)
-            {
-                RCLCPP_ERROR(node_->get_logger(),
-                             "Move-to-table planning timed out after %lds",
-                             TIMEOUT.count());
-                break;
-            }
-            else
-            {
-                RCLCPP_WARN(node_->get_logger(),
-                            "Move-to-table planning failed (%.2fs elapsed), retrying: %s",
-                            std::chrono::duration<double>(elapsed).count(),
-                            e.what());
-            }
-        }
+        // blocks long‐axis = Y, so separate along X
+        wrist_target.pose.position.x = TABLE_X + side;
+        wrist_target.pose.position.y = TABLE_Y;
+    }
+    else
+    {
+        // blocks long‐axis = X, so separate along Y
+        wrist_target.pose.position.x = TABLE_X;
+        wrist_target.pose.position.y = TABLE_Y + side;
+    }
+
+    // DEBUG print
+    RCLCPP_INFO(node_->get_logger(),
+                " -> [x=%.3f y=%.3f z=%.3f yaw=%.2f°]",
+                wrist_target.pose.position.x,
+                wrist_target.pose.position.y,
+                wrist_target.pose.position.z,
+                yaw * 180.0 / M_PI);
+
+    try
+    {
+        motion_node_->motion_planning_control(
+            wrist_target.pose, RobotTaskStatus::Arm::ARM_torso);
+        RCLCPP_INFO(node_->get_logger(),
+                    "Arm moved to block pose (wrist offset by %.3fm).",
+                    GRIPPER_OFFSET);
+    }
+    catch (const std::exception &e)
+    {
+
+        RCLCPP_ERROR(node_->get_logger(),
+                     "Move-to-table planning timed out after %lds",
+                     TIMEOUT.count());
+        break;
     }
 }
 
@@ -271,103 +264,15 @@ void StateMachine::placeBlock()
                 "Placing block %d in layer %d",
                 block_count_, layer_count_);
 
-    // Build a PoseStamped for the place location
-    geometry_msgs::msg::PoseStamped target_pose;
-    target_pose.header.frame_id = "base_footprint"; // <-- add semicolon
-    target_pose.header.stamp = node_->now();
+    motion_node_->GripperControl("OPEN");
+}
 
-    // 1) compute Z so the block sits on top of the correct layer
-    double table_top_z = TABLE_Z + TABLE_DZ / 2.0;
-    double z = table_top_z + layer_count_ * BLOCK_DZ // full layers below
-               + BLOCK_DZ / 2.0;                     // center of this block
-    target_pose.pose.position.z = z;
+// motion_node_->GripperControl("OPEN");
 
-    // 2) pick orientation: even layers = 90°, odd = 0°
-    bool even_layer = (layer_count_ % 2 == 0);
-    double yaw = even_layer ? M_PI_2 : 0.0; // use the M_PI_2 macro from <cmath>
-    tf2::Quaternion q;
-    q.setRPY(0, M_PI_2, yaw);
-    target_pose.pose.orientation = tf2::toMsg(q);
-
-    // 3) for each layer there are 2 blocks: index 0 or 1 in that layer
-    //    we space them one block‐width (BLOCK_DY) apart along the axis
-    double sep = BLOCK_DY; // gap = block “width”
-    bool first_in_layer = (block_count_ % 2 == 0);
-    double side = first_in_layer ? -sep : sep;
-
-    if (even_layer)
-    {
-        // blocks long‐axis = Y, so separate along X
-        target_pose.pose.position.x = TABLE_X + side;
-        target_pose.pose.position.y = TABLE_Y;
-    }
-    else
-    {
-        // blocks long‐axis = X, so separate along Y
-        target_pose.pose.position.x = TABLE_X;
-        target_pose.pose.position.y = TABLE_Y + side;
-    }
-
-    // DEBUG print
-    RCLCPP_INFO(node_->get_logger(),
-                " -> [x=%.3f y=%.3f z=%.3f yaw=%.2f°]",
-                target_pose.pose.position.x,
-                target_pose.pose.position.y,
-                target_pose.pose.position.z,
-                yaw * 180.0 / M_PI);
-
-    {
-        // before dropping, hold back by the gripper offset
-        geometry_msgs::msg::PoseStamped wrist_place = target_pose;
-        wrist_place.pose.position.z += GRIPPER_OFFSET;
-        bool success = false;
-        auto start = std::chrono::steady_clock::now();
-        const auto TIMEOUT = std::chrono::seconds(5);
-
-        // retry loop
-        while (!success)
-        {
-            try
-            {
-                motion_node_->motion_planning_control(
-                    wrist_place.pose, RobotTaskStatus::Arm::ARM_torso);
-                RCLCPP_INFO(node_->get_logger(),
-                            "Arm moved to place pose (wrist offset by %.3fm).",
-                            GRIPPER_OFFSET);
-                success = true;
-            }
-            catch (const std::exception &e)
-            {
-                auto elapsed = std::chrono::steady_clock::now() - start;
-                if (elapsed > TIMEOUT)
-                {
-                    RCLCPP_ERROR(node_->get_logger(),
-                                 "Place planning timed out after %lds",
-                                 TIMEOUT.count());
-                    break;
-                }
-                else
-                {
-                    RCLCPP_WARN(node_->get_logger(),
-                                "Place planning failed (%.2fs elapsed), retrying: %s",
-                                std::chrono::duration<double>(elapsed).count(),
-                                e.what());
-                }
-            }
-        }
-
-        if (success)
-        {
-            motion_node_->GripperControl("OPEN");
-        }
-    }
-
-    // motion_node_->GripperControl("OPEN");
-
-    // try {
-    //     motion_node_->motion_planning_control(pick_pose_, RobotTaskStatus::Arm::ARM_torso);
-    //     RCLCPP_INFO(node_->get_logger(), "Arm moved to table position.");
-    // } catch (const std::exception &e) {
-    //     RCLCPP_ERROR(node_->get_logger(), "Failed to move to table position: %s", e.what());
-    // }
+// try {
+//     motion_node_->motion_planning_control(pick_pose_, RobotTaskStatus::Arm::ARM_torso);
+//     RCLCPP_INFO(node_->get_logger(), "Arm moved to table position.");
+// } catch (const std::exception &e) {
+//     RCLCPP_ERROR(node_->get_logger(), "Failed to move to table position: %s", e.what());
+// }
 }
